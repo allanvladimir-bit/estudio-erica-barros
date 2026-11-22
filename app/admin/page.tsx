@@ -1,7 +1,12 @@
 
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import {
+  useEffect,
+  useState,
+  type FormEvent,
+  type CSSProperties,
+} from "react";
 import { supabase } from "../../lib/supabase";
 
 type Appointment = {
@@ -59,6 +64,24 @@ function shiftDate(value: string, days: number) {
   ].join("-");
 }
 
+function startOfWeek(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+  const weekday = date.getUTCDay();
+  const difference = weekday === 0 ? -6 : 1 - weekday;
+
+  return shiftDate(value, difference);
+}
+
+function dayTitle(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
+    weekday: "long",
+    day: "2-digit",
+    month: "2-digit",
+    timeZone: "America/Sao_Paulo",
+  }).format(new Date(`${value}T12:00:00-03:00`));
+}
+
 function formatDate(value: string) {
   return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
@@ -83,6 +106,22 @@ function getBrazilTime(value: string) {
   }).format(new Date(value));
 }
 
+function statusLabel(status: string) {
+  if (status === "pending") return "Aguardando confirmação";
+  if (status === "confirmed") return "Confirmado";
+  if (status === "completed") return "Concluído";
+  if (status === "cancelled") return "Cancelado";
+  return status;
+}
+
+function statusColor(status: string) {
+  if (status === "pending") return "#B7791F";
+  if (status === "confirmed") return "#244C3B";
+  if (status === "completed") return "#39834B";
+  if (status === "cancelled") return "#A33B32";
+  return "#777";
+}
+
 export default function AdminPage() {
   const [view, setView] = useState("loading");
   const [email, setEmail] = useState("");
@@ -94,6 +133,9 @@ export default function AdminPage() {
   const [dateFilter, setDateFilter] = useState("today");
   const [customDate, setCustomDate] = useState(todayInBrazil());
   const [statusFilter, setStatusFilter] = useState("all");
+
+  const [agendaMode, setAgendaMode] = useState("day");
+  const [agendaDate, setAgendaDate] = useState(todayInBrazil());
 
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState("");
@@ -261,7 +303,6 @@ export default function AdminPage() {
       return;
     }
 
-    // Horário local de São Paulo (UTC-3).
     const startAt = new Date(
       `${editing.date}T${editing.time}:00-03:00`
     );
@@ -377,7 +418,16 @@ export default function AdminPage() {
     0
   );
 
-  const cardStyle: React.CSSProperties = {
+  const agendaStart = startOfWeek(agendaDate);
+
+  const agendaDays =
+    agendaMode === "day"
+      ? [agendaDate]
+      : Array.from({ length: 6 }, (_, index) =>
+          shiftDate(agendaStart, index)
+        );
+
+  const cardStyle: CSSProperties = {
     background: "#fff",
     border: "1px solid #e8e1d5",
     borderRadius: 12,
@@ -385,7 +435,7 @@ export default function AdminPage() {
     marginBottom: 14,
   };
 
-  const buttonStyle: React.CSSProperties = {
+  const buttonStyle: CSSProperties = {
     padding: "11px 14px",
     borderRadius: 8,
     border: "1px solid #244C3B",
@@ -393,7 +443,7 @@ export default function AdminPage() {
     cursor: "pointer",
   };
 
-  const inputStyle: React.CSSProperties = {
+  const inputStyle: CSSProperties = {
     width: "100%",
     padding: 12,
     marginTop: 7,
@@ -541,6 +591,215 @@ export default function AdminPage() {
 
       <h2 style={{ marginTop: 28 }}>Agenda</h2>
 
+      {/* AGENDA VISUAL DIÁRIA E SEMANAL */}
+      <section
+        style={{
+          ...cardStyle,
+          border: "1px solid #C5A45B",
+          padding: 14,
+        }}
+      >
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            marginBottom: 16,
+          }}
+        >
+          <button
+            onClick={() => setAgendaMode("day")}
+            style={{
+              ...buttonStyle,
+              background: agendaMode === "day" ? "#244C3B" : "#fff",
+              color: agendaMode === "day" ? "#fff" : "#244C3B",
+            }}
+          >
+            VISÃO DIÁRIA
+          </button>
+
+          <button
+            onClick={() => setAgendaMode("week")}
+            style={{
+              ...buttonStyle,
+              background: agendaMode === "week" ? "#244C3B" : "#fff",
+              color: agendaMode === "week" ? "#fff" : "#244C3B",
+            }}
+          >
+            VISÃO SEMANAL
+          </button>
+        </div>
+
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 8,
+            flexWrap: "wrap",
+            marginBottom: 16,
+          }}
+        >
+          <button
+            onClick={() =>
+              setAgendaDate(
+                shiftDate(agendaDate, agendaMode === "day" ? -1 : -7)
+              )
+            }
+            style={buttonStyle}
+          >
+            ← Anterior
+          </button>
+
+          <button
+            onClick={() => setAgendaDate(today)}
+            style={{
+              ...buttonStyle,
+              background: "#C5A45B",
+              color: "#17382B",
+            }}
+          >
+            HOJE
+          </button>
+
+          <button
+            onClick={() =>
+              setAgendaDate(
+                shiftDate(agendaDate, agendaMode === "day" ? 1 : 7)
+              )
+            }
+            style={buttonStyle}
+          >
+            Próximo →
+          </button>
+        </div>
+
+        {agendaMode === "day" && (
+          <h3
+            style={{
+              color: "#244C3B",
+              textTransform: "capitalize",
+            }}
+          >
+            {dayTitle(agendaDate)}
+          </h3>
+        )}
+
+        {agendaMode === "week" && (
+          <h3 style={{ color: "#244C3B" }}>
+            Semana de {dayTitle(agendaDays[0])}
+          </h3>
+        )}
+
+        {agendaDays.map((day) => {
+          const dayItems = appointments
+            .filter((item) => dateInBrazil(item.start_at) === day)
+            .sort(
+              (a, b) =>
+                new Date(a.start_at).getTime() -
+                new Date(b.start_at).getTime()
+            );
+
+          return (
+            <div
+              key={day}
+              style={{
+                borderTop: "1px solid #e8e1d5",
+                paddingTop: 12,
+                marginTop: 12,
+              }}
+            >
+              <h3
+                style={{
+                  color: "#244C3B",
+                  textTransform: "capitalize",
+                  fontSize: 16,
+                }}
+              >
+                {dayTitle(day)}
+                {day === today ? " • HOJE" : ""}
+              </h3>
+
+              {dayItems.length === 0 ? (
+                <p style={{ color: "#888", fontSize: 14 }}>
+                  Nenhum atendimento agendado.
+                </p>
+              ) : (
+                dayItems.map((item) => (
+                  <div
+                    key={item.id}
+                    style={{
+                      background:
+                        item.status === "cancelled"
+                          ? "#f5eeee"
+                          : item.status === "completed"
+                          ? "#edf5ed"
+                          : "#F7F4ED",
+                      borderLeft: `5px solid ${statusColor(item.status)}`,
+                      borderRadius: 8,
+                      padding: 12,
+                      marginBottom: 10,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 8,
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <strong style={{ color: "#244C3B" }}>
+                        {getBrazilTime(item.start_at)} –{" "}
+                        {getBrazilTime(item.end_at)}
+                      </strong>
+
+                      <strong
+                        style={{
+                          fontSize: 12,
+                          color: statusColor(item.status),
+                        }}
+                      >
+                        {statusLabel(item.status).toUpperCase()}
+                      </strong>
+                    </div>
+
+                    <p style={{ margin: "9px 0 4px", fontWeight: "bold" }}>
+                      {item.clients?.name || "Cliente"}
+                    </p>
+
+                    <p style={{ margin: "4px 0", fontSize: 14 }}>
+                      {item.services?.name || "Serviço"}
+                    </p>
+
+                    <p style={{ margin: "4px 0", fontSize: 14 }}>
+                      {item.services?.price != null
+                        ? money(item.services.price)
+                        : "Valor não informado"}
+                    </p>
+
+                    <button
+                      onClick={() => startEditing(item)}
+                      style={{
+                        ...buttonStyle,
+                        marginTop: 8,
+                        background: "#C5A45B",
+                        color: "#17382B",
+                      }}
+                    >
+                      EDITAR AGENDAMENTO
+                    </button>
+                  </div>
+                ))
+              )}
+            </div>
+          );
+        })}
+      </section>
+
+      {/* FILTROS ANTIGOS */}
+      <h2 style={{ marginTop: 28 }}>Filtrar agendamentos</h2>
+
       <div
         style={{
           display: "flex",
@@ -571,7 +830,9 @@ export default function AdminPage() {
 
       {dateFilter === "custom" && (
         <div style={cardStyle}>
-          <label><strong>Escolha o dia:</strong></label>
+          <label>
+            <strong>Escolha o dia:</strong>
+          </label>
           <input
             type="date"
             value={customDate}
@@ -581,6 +842,7 @@ export default function AdminPage() {
         </div>
       )}
 
+      {/* RESUMO */}
       <h2>Resumo de atendimentos</h2>
 
       <div
@@ -618,6 +880,7 @@ export default function AdminPage() {
         concluídos e os preços cadastrados nos serviços.
       </p>
 
+      {/* LISTA DE AGENDAMENTOS */}
       <h2 style={{ marginTop: 28 }}>Agendamentos</h2>
 
       <div
@@ -655,6 +918,7 @@ export default function AdminPage() {
         </p>
       )}
 
+      {/* FORMULÁRIO DE EDIÇÃO */}
       {editing && (
         <form
           onSubmit={saveEdit}
@@ -789,16 +1053,7 @@ export default function AdminPage() {
           </p>
 
           <p>
-            <strong>Status:</strong>{" "}
-            {item.status === "pending"
-              ? "Aguardando confirmação"
-              : item.status === "confirmed"
-              ? "Confirmado"
-              : item.status === "completed"
-              ? "Concluído"
-              : item.status === "cancelled"
-              ? "Cancelado"
-              : item.status}
+            <strong>Status:</strong> {statusLabel(item.status)}
           </p>
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
