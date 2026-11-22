@@ -11,6 +11,10 @@ type Service = {
   duration_minutes: number;
 };
 
+type Slot = {
+  slot_start: string;
+};
+
 const fieldStyle = {
   width: "100%",
   padding: "14px",
@@ -22,9 +26,44 @@ const fieldStyle = {
   boxSizing: "border-box" as const,
 };
 
+const primaryButtonStyle = {
+  width: "100%",
+  padding: "15px",
+  border: "none",
+  borderRadius: "9px",
+  background: "#C5A45B",
+  color: "#17382B",
+  fontSize: "13px",
+  fontWeight: 700,
+  letterSpacing: "1px",
+  cursor: "pointer",
+};
+
 function todayInBrazil() {
-  return new Date().toLocaleDateString("sv-SE", {
+  return new Intl.DateTimeFormat("en-CA", {
     timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function formatPrice(price: number, name: string) {
+  const value = price.toLocaleString("pt-BR", {
+    style: "currency",
+    currency: "BRL",
+  });
+
+  return name.toLowerCase().includes("trança")
+    ? `A partir de ${value}`
+    : value;
+}
+
+function formatTime(slot: string) {
+  return new Date(slot).toLocaleTimeString("pt-BR", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
   });
 }
 
@@ -43,19 +82,29 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [loadingSlots, setLoadingSlots] = useState(false);
   const [sending, setSending] = useState(false);
+
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
 
+  // Carrega os serviços ativos
   useEffect(() => {
+    let active = true;
+
     async function loadServices() {
+      setLoading(true);
+      setError("");
+
       const { data, error } = await supabase
         .from("services")
         .select("id, name, price, duration_minutes")
         .eq("active", true)
         .order("name");
 
+      if (!active) return;
+
       if (error) {
-        setError("Não foi possível carregar os serviços.");
+        console.error("Erro ao carregar serviços:", error);
+        setError("Não foi possível carregar os serviços. Tente novamente.");
       } else {
         setServices(data || []);
       }
@@ -64,15 +113,21 @@ export default function Home() {
     }
 
     loadServices();
+
+    return () => {
+      active = false;
+    };
   }, []);
 
+  // Consulta horários disponíveis
   useEffect(() => {
     if (!selectedService || !date) {
       setSlots([]);
+      setLoadingSlots(false);
       return;
     }
 
-    let cancelled = false;
+    let active = true;
 
     async function loadSlots() {
       setLoadingSlots(true);
@@ -83,21 +138,21 @@ export default function Home() {
       const { data, error } = await supabase.rpc(
         "get_available_slots",
         {
-          p_service_id: selectedService.id,
+          p_service_id: selectedService!.id,
           p_date: date,
         }
       );
 
-      if (cancelled) return;
+      if (!active) return;
 
       if (error) {
-        setError("Não foi possível consultar os horários.");
-        console.error(error);
+        console.error("Erro ao consultar horários:", error);
+        setError("Não foi possível consultar os horários. Tente novamente.");
       } else {
+        const availableSlots = (data || []) as Slot[];
+
         setSlots(
-          (data || []).map(
-            (item: { slot_start: string }) => item.slot_start
-          )
+          availableSlots.map((item) => item.slot_start)
         );
       }
 
@@ -107,37 +162,58 @@ export default function Home() {
     loadSlots();
 
     return () => {
-      cancelled = true;
+      active = false;
     };
   }, [selectedService, date]);
 
-  function formatPrice(price: number, name: string) {
-    const value = price.toLocaleString("pt-BR", {
-      style: "currency",
-      currency: "BRL",
-    });
+  // Seleciona um serviço
+  function chooseService(service: Service) {
+    setSelectedService(service);
+    setDate("");
+    setSlots([]);
+    setSelectedSlot("");
+    setClientName("");
+    setClientPhone("");
+    setError("");
+    setSuccess("");
 
-    return name.toLowerCase().includes("trança")
-      ? `A partir de ${value}`
-      : value;
+    setTimeout(() => {
+      document.getElementById("agendamento")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 100);
   }
 
-  function formatTime(slot: string) {
-    return new Date(slot).toLocaleTimeString("pt-BR", {
-      timeZone: "America/Sao_Paulo",
-      hour: "2-digit",
-      minute: "2-digit",
-    });
+  // Seleciona uma data
+  function chooseDate(value: string) {
+    setDate(value);
+    setSelectedSlot("");
+    setSuccess("");
+    setError("");
   }
 
+  // Envia agendamento
   async function bookAppointment() {
-    if (
-      !selectedService ||
-      !selectedSlot ||
-      !clientName.trim() ||
-      !clientPhone.trim()
-    ) {
-      setError("Preencha seu nome, telefone e escolha um horário.");
+    if (!selectedService) {
+      setError("Escolha um serviço primeiro.");
+      return;
+    }
+
+    if (!date || !selectedSlot) {
+      setError("Escolha a data e o horário desejados.");
+      return;
+    }
+
+    if (!clientName.trim()) {
+      setError("Digite seu nome completo.");
+      return;
+    }
+
+    const phone = clientPhone.replace(/\D/g, "");
+
+    if (phone.length < 10 || phone.length > 13) {
+      setError("Digite um WhatsApp válido com DDD.");
       return;
     }
 
@@ -145,37 +221,45 @@ export default function Home() {
     setError("");
     setSuccess("");
 
-    const { data, error } = await supabase.rpc(
-      "create_public_appointment",
-      {
-        p_service_id: selectedService.id,
-        p_start_at: new Date(selectedSlot).toISOString(),
-        p_client_name: clientName.trim(),
-        p_client_phone: clientPhone.trim(),
+    try {
+      const { data, error } = await supabase.rpc(
+        "create_public_appointment",
+        {
+          p_service_id: selectedService.id,
+          p_start_at: new Date(selectedSlot).toISOString(),
+          p_client_name: clientName.trim(),
+          p_client_phone: phone,
+        }
+      );
+
+      if (error) {
+        console.error("Erro no agendamento:", error);
+        setError(
+          "Não foi possível concluir o agendamento. Atualize os horários e tente novamente."
+        );
+      } else if (data?.success === false) {
+        setError(data.message || "Não foi possível realizar o agendamento.");
+      } else {
+        setSuccess(
+          "Solicitação enviada com sucesso! Aguarde a confirmação do Estúdio Erica Barros."
+        );
+
+        setSelectedSlot("");
+        setClientName("");
+        setClientPhone("");
+        setSlots([]);
       }
-    );
-
-    if (error) {
-      setError(
-        "Não foi possível concluir. Atualize os horários e tente novamente."
-      );
-      console.error(error);
-    } else if (data?.success === false) {
-      setError(data.message || "Não foi possível realizar o agendamento.");
-    } else {
-      setSuccess(
-        "Solicitação enviada! Seu horário foi registrado. Aguarde a confirmação do Estúdio Erica Barros."
-      );
-      setSelectedSlot("");
-      setClientName("");
-      setClientPhone("");
+    } catch (err) {
+      console.error(err);
+      setError("Ocorreu um erro inesperado. Tente novamente.");
+    } finally {
+      setSending(false);
     }
-
-    setSending(false);
   }
 
   return (
     <main>
+      {/* CABEÇALHO */}
       <header className="header">
         <a href="#" className="brand">
           <span className="brand-mark">EB</span>
@@ -184,27 +268,42 @@ export default function Home() {
             <small>ERICA BARROS</small>
           </span>
         </a>
-        <a href="#agendamento" className="header-link">
+
+        <a href="#servicos" className="header-link">
           Agendar horário
         </a>
       </header>
 
+      {/* APRESENTAÇÃO */}
       <section className="hero">
-        <p className="eyebrow">BELEZA • CUIDADO • ELEGÂNCIA</p>
-        <h1>Sua beleza merece<br />um momento especial.</h1>
+        <p className="eyebrow">
+          BELEZA • CUIDADO • ELEGÂNCIA
+        </p>
+
+        <h1>
+          Sua beleza merece
+          <br />
+          um momento especial.
+        </h1>
+
         <p className="hero-text">
           Um espaço dedicado a realçar sua beleza e cuidar de você
           com carinho.
         </p>
+
         <a href="#servicos" className="gold-button">
           ESCOLHER MEU SERVIÇO
         </a>
+
         <div className="hero-decoration">EB</div>
       </section>
 
+      {/* SERVIÇOS */}
       <section className="services" id="servicos">
         <p className="eyebrow">CUIDADOS PARA VOCÊ</p>
+
         <h2>Nossos serviços</h2>
+
         <p className="section-text">
           Escolha seu cuidado e reserve seu momento.
         </p>
@@ -212,53 +311,54 @@ export default function Home() {
         <div className="service-grid">
           {loading ? (
             <p>Carregando serviços...</p>
+          ) : error && services.length === 0 ? (
+            <p>{error}</p>
           ) : services.length === 0 ? (
             <p>Nenhum serviço disponível no momento.</p>
           ) : (
-            services.map((service) => (
-              <article
-                className="service-card"
-                key={service.id}
-                role="button"
-                tabIndex={0}
-                aria-pressed={selectedService?.id === service.id}
-                onClick={() => {
-                  setSelectedService(service);
-                  setDate("");
-                  setSelectedSlot("");
-                  setSuccess("");
-                  setError("");
-                }}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    setSelectedService(service);
-                    setDate("");
-                    setSelectedSlot("");
-                    setSuccess("");
-                    setError("");
-                  }
-                }}
-                style={{
-                  cursor: "pointer",
-                  border: selectedService?.id === service.id
-                    ? "2px solid #C5A45B"
-                    : undefined,
-                  outline: "none",
-                }}
-              >
-                <div>
-                  <h3>{service.name}</h3>
-                  <p>
-                    {service.duration_minutes} minutos • Estúdio Erica Barros
-                  </p>
-                </div>
-                <strong>{formatPrice(service.price, service.name)}</strong>
-              </article>
-            ))
+            services.map((service) => {
+              const selected = selectedService?.id === service.id;
+
+              return (
+                <button
+                  type="button"
+                  key={service.id}
+                  className="service-card"
+                  aria-pressed={selected}
+                  onClick={() => chooseService(service)}
+                  style={{
+                    width: "100%",
+                    minHeight: "90px",
+                    fontFamily: "inherit",
+                    textAlign: "left",
+                    cursor: "pointer",
+                    border: selected
+                      ? "2px solid #C5A45B"
+                      : "1px solid #e4dbc9",
+                    background: selected ? "#FBF8F1" : "#FFFFFF",
+                    color: "#26382E",
+                    WebkitTapHighlightColor: "transparent",
+                  }}
+                >
+                  <div>
+                    <h3>{service.name}</h3>
+                    <p>
+                      {service.duration_minutes} minutos
+                      {" • "}
+                      Estúdio Erica Barros
+                    </p>
+                  </div>
+
+                  <strong>
+                    {formatPrice(service.price, service.name)}
+                  </strong>
+                </button>
+              );
+            })
           )}
         </div>
 
+        {/* AGENDAMENTO */}
         {selectedService && (
           <div
             id="agendamento"
@@ -269,105 +369,158 @@ export default function Home() {
               border: "1px solid #E5DDCE",
               borderRadius: "16px",
               color: "#244C3B",
+              textAlign: "left",
+              scrollMarginTop: "20px",
             }}
           >
             <p className="eyebrow">RESERVE SEU MOMENTO</p>
-            <h2 style={{ marginBottom: "8px" }}>Seu agendamento</h2>
-            <p style={{ marginBottom: "22px" }}>
-              Serviço escolhido: <strong>{selectedService.name}</strong>
-              <br />
-              Valor: <strong>
-                {formatPrice(selectedService.price, selectedService.name)}
-              </strong>
-              <br />
-              Duração: <strong>{selectedService.duration_minutes} minutos</strong>
-            </p>
 
-            <label style={{ display: "block", marginBottom: "8px", fontWeight: 600 }}>
+            <h2 style={{ marginBottom: "8px" }}>
+              Seu agendamento
+            </h2>
+
+            <div
+              style={{
+                padding: "16px",
+                marginBottom: "22px",
+                background: "#F2E9D8",
+                borderRadius: "10px",
+              }}
+            >
+              <p style={{ margin: 0, lineHeight: 1.9 }}>
+                Serviço: <strong>{selectedService.name}</strong>
+                <br />
+                Valor: <strong>
+                  {formatPrice(selectedService.price, selectedService.name)}
+                </strong>
+                <br />
+                Duração: <strong>
+                  {selectedService.duration_minutes} minutos
+                </strong>
+              </p>
+            </div>
+
+            {/* DATA */}
+            <label
+              htmlFor="appointment-date"
+              style={{
+                display: "block",
+                marginBottom: "8px",
+                fontWeight: 600,
+              }}
+            >
               Escolha a data
             </label>
+
             <input
+              id="appointment-date"
               type="date"
               value={date}
               min={todayInBrazil()}
-              onChange={(event) => {
-                setDate(event.target.value);
-                setSelectedSlot("");
-                setSuccess("");
-              }}
+              onChange={(event) => chooseDate(event.target.value)}
               style={fieldStyle}
             />
 
+            {/* HORÁRIOS */}
             {date && (
-              <div style={{ marginTop: "22px" }}>
+              <div style={{ marginTop: "24px" }}>
                 <strong>Horários disponíveis</strong>
 
                 {loadingSlots ? (
                   <p>Consultando horários...</p>
                 ) : slots.length === 0 ? (
                   <p style={{ marginTop: "12px" }}>
-                    Não há horários disponíveis nesta data. Escolha outro dia.
+                    Não há horários disponíveis nesta data.
+                    Escolha outro dia.
                   </p>
                 ) : (
                   <div
                     style={{
-                      display: "flex",
-                      flexWrap: "wrap",
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(85px, 1fr))",
                       gap: "10px",
                       marginTop: "14px",
                     }}
                   >
-                    {slots.map((slot) => (
-                      <button
-                        type="button"
-                        key={slot}
-                        onClick={() => setSelectedSlot(slot)}
-                        style={{
-                          padding: "11px 17px",
-                          borderRadius: "9px",
-                          border: selectedSlot === slot
-                            ? "2px solid #244C3B"
-                            : "1px solid #C5A45B",
-                          background: selectedSlot === slot
-                            ? "#244C3B"
-                            : "#FFFFFF",
-                          color: selectedSlot === slot
-                            ? "#FFFFFF"
-                            : "#244C3B",
-                          cursor: "pointer",
-                          fontSize: "15px",
-                        }}
-                      >
-                        {formatTime(slot)}
-                      </button>
-                    ))}
+                    {slots.map((slot) => {
+                      const selected = selectedSlot === slot;
+
+                      return (
+                        <button
+                          type="button"
+                          key={slot}
+                          onClick={() => {
+                            setSelectedSlot(slot);
+                            setError("");
+                            setSuccess("");
+                          }}
+                          style={{
+                            padding: "13px 8px",
+                            borderRadius: "9px",
+                            border: selected
+                              ? "2px solid #244C3B"
+                              : "1px solid #C5A45B",
+                            background: selected ? "#244C3B" : "#FFFFFF",
+                            color: selected ? "#FFFFFF" : "#244C3B",
+                            cursor: "pointer",
+                            fontSize: "15px",
+                            fontWeight: 600,
+                          }}
+                        >
+                          {formatTime(slot)}
+                        </button>
+                      );
+                    })}
                   </div>
                 )}
               </div>
             )}
 
+            {/* DADOS DO CLIENTE */}
             {selectedSlot && (
-              <div style={{ marginTop: "24px" }}>
-                <p style={{ marginBottom: "15px" }}>
-                  Horário escolhido: <strong>{formatTime(selectedSlot)}</strong>
+              <div style={{ marginTop: "25px" }}>
+                <p style={{ marginBottom: "20px" }}>
+                  Horário escolhido:{" "}
+                  <strong>{formatTime(selectedSlot)}</strong>
                 </p>
 
-                <label style={{ display: "block", marginBottom: "8px", fontWeight: 600 }}>
-                  Seu nome
+                <label
+                  htmlFor="client-name"
+                  style={{
+                    display: "block",
+                    marginBottom: "8px",
+                    fontWeight: 600,
+                  }}
+                >
+                  Seu nome completo
                 </label>
+
                 <input
+                  id="client-name"
                   type="text"
+                  autoComplete="name"
                   value={clientName}
                   onChange={(event) => setClientName(event.target.value)}
                   placeholder="Digite seu nome completo"
                   style={fieldStyle}
                 />
 
-                <label style={{ display: "block", margin: "16px 0 8px", fontWeight: 600 }}>
+                <label
+                  htmlFor="client-phone"
+                  style={{
+                    display: "block",
+                    margin: "16px 0 8px",
+                    fontWeight: 600,
+                  }}
+                >
                   Seu WhatsApp
                 </label>
+
                 <input
+                  id="client-phone"
                   type="tel"
+                  autoComplete="tel"
+                  inputMode="tel"
                   value={clientPhone}
                   onChange={(event) => setClientPhone(event.target.value)}
                   placeholder="(11) 99999-9999"
@@ -378,28 +531,43 @@ export default function Home() {
                   type="button"
                   disabled={sending}
                   onClick={bookAppointment}
-                  className="gold-button"
                   style={{
-                    width: "100%",
-                    border: "none",
+                    ...primaryButtonStyle,
                     marginTop: "22px",
                     cursor: sending ? "wait" : "pointer",
                     opacity: sending ? 0.7 : 1,
                   }}
                 >
-                  {sending ? "ENVIANDO..." : "CONFIRMAR AGENDAMENTO"}
+                  {sending
+                    ? "ENVIANDO..."
+                    : "CONFIRMAR AGENDAMENTO"}
                 </button>
               </div>
             )}
 
+            {/* MENSAGENS */}
             {error && (
-              <p style={{ color: "#A52A2A", marginTop: "18px" }}>
+              <p
+                role="alert"
+                style={{
+                  color: "#A52A2A",
+                  marginTop: "18px",
+                  fontWeight: 600,
+                }}
+              >
                 {error}
               </p>
             )}
 
             {success && (
-              <p style={{ color: "#244C3B", marginTop: "18px", fontWeight: 600 }}>
+              <p
+                role="status"
+                style={{
+                  color: "#244C3B",
+                  marginTop: "18px",
+                  fontWeight: 600,
+                }}
+              >
                 {success}
               </p>
             )}
@@ -407,19 +575,30 @@ export default function Home() {
         )}
       </section>
 
+      {/* INFORMAÇÕES */}
       <section className="booking">
         <p className="eyebrow">SEU MOMENTO COMEÇA AQUI</p>
+
         <h2>Esperamos por você!</h2>
+
         <p>
           Atendimento de segunda a sábado, das 09h às 18h.
         </p>
+
         <small>Domingo: fechado</small>
       </section>
 
+      {/* RODAPÉ */}
       <footer className="footer">
-        <span className="footer-brand">ESTÚDIO ERICA BARROS</span>
+        <span className="footer-brand">
+          ESTÚDIO ERICA BARROS
+        </span>
+
         <p>Beleza e cuidado em cada detalhe.</p>
-        <small>© {new Date().getFullYear()} Estúdio Erica Barros</small>
+
+        <small>
+          © {new Date().getFullYear()} Estúdio Erica Barros
+        </small>
       </footer>
     </main>
   );
