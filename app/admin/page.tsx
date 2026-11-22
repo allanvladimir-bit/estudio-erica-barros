@@ -1,4 +1,3 @@
-
 "use client";
 
 import {
@@ -737,7 +736,7 @@ export default function AdminPage() {
         </button>
       </header>
 
-      {/* GERENCIAMENTO DE SERVIÇOS */}
+      {/* GERENCIAMENTO DE SERVIÇOS - VERSÃO ATUALIZADA */}
       <section style={{ marginTop: 28 }}>
         <div
           style={{
