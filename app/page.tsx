@@ -121,7 +121,7 @@ export default function Home() {
 
   // Consulta horários disponíveis
   useEffect(() => {
-    if (!selectedService || !date) {
+    if (!selectedService || !date || success) {
       setSlots([]);
       setLoadingSlots(false);
       return;
@@ -164,7 +164,7 @@ export default function Home() {
     return () => {
       active = false;
     };
-  }, [selectedService, date]);
+  }, [selectedService, date, success]);
 
   // Seleciona um serviço
   function chooseService(service: Service) {
@@ -237,8 +237,10 @@ export default function Home() {
         setError(
           "Não foi possível concluir o agendamento. Atualize os horários e tente novamente."
         );
-      } else if (data?.success === false) {
-        setError(data.message || "Não foi possível realizar o agendamento.");
+      } else if (!data || data.success !== true) {
+        setError(
+          data?.message || "Não foi possível confirmar o recebimento do agendamento."
+        );
       } else {
         setSuccess(
           "Solicitação enviada com sucesso! Aguarde a confirmação do Estúdio Erica Barros."
@@ -373,179 +375,259 @@ export default function Home() {
               scrollMarginTop: "20px",
             }}
           >
-            <p className="eyebrow">RESERVE SEU MOMENTO</p>
+            {success ? (
+              <div
+                style={{
+                  padding: "20px 8px",
+                  textAlign: "center",
+                }}
+              >
+                <div
+                  style={{
+                    width: "64px",
+                    height: "64px",
+                    margin: "0 auto 18px",
+                    borderRadius: "50%",
+                    background: "#244C3B",
+                    color: "#FFFFFF",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: "32px",
+                  }}
+                >
+                  ✓
+                </div>
 
-            <h2 style={{ marginBottom: "8px" }}>
-              Seu agendamento
-            </h2>
+                <p className="eyebrow">SOLICITAÇÃO RECEBIDA</p>
 
-            <div
-              style={{
-                padding: "16px",
-                marginBottom: "22px",
-                background: "#F2E9D8",
-                borderRadius: "10px",
-              }}
-            >
-              <p style={{ margin: 0, lineHeight: 1.9 }}>
-                Serviço: <strong>{selectedService.name}</strong>
-                <br />
-                Valor: <strong>
-                  {formatPrice(selectedService.price, selectedService.name)}
-                </strong>
-                <br />
-                Duração: <strong>
-                  {selectedService.duration_minutes} minutos
-                </strong>
-              </p>
-            </div>
+                <h2 style={{ marginBottom: "12px" }}>
+                  Agendamento enviado!
+                </h2>
 
-            {/* DATA */}
-            <label
-              htmlFor="appointment-date"
-              style={{
-                display: "block",
-                marginBottom: "8px",
-                fontWeight: 600,
-              }}
-            >
-              Escolha a data
-            </label>
-
-            <input
-              id="appointment-date"
-              type="date"
-              value={date}
-              min={todayInBrazil()}
-              onChange={(event) => chooseDate(event.target.value)}
-              style={fieldStyle}
-            />
-
-            {/* HORÁRIOS */}
-            {date && (
-              <div style={{ marginTop: "24px" }}>
-                <strong>Horários disponíveis</strong>
-
-                {loadingSlots ? (
-                  <p>Consultando horários...</p>
-                ) : slots.length === 0 ? (
-                  <p style={{ marginTop: "12px" }}>
-                    Não há horários disponíveis nesta data.
-                    Escolha outro dia.
-                  </p>
-                ) : (
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(85px, 1fr))",
-                      gap: "10px",
-                      marginTop: "14px",
-                    }}
-                  >
-                    {slots.map((slot) => {
-                      const selected = selectedSlot === slot;
-
-                      return (
-                        <button
-                          type="button"
-                          key={slot}
-                          onClick={() => {
-                            setSelectedSlot(slot);
-                            setError("");
-                            setSuccess("");
-                          }}
-                          style={{
-                            padding: "13px 8px",
-                            borderRadius: "9px",
-                            border: selected
-                              ? "2px solid #244C3B"
-                              : "1px solid #C5A45B",
-                            background: selected ? "#244C3B" : "#FFFFFF",
-                            color: selected ? "#FFFFFF" : "#244C3B",
-                            cursor: "pointer",
-                            fontSize: "15px",
-                            fontWeight: 600,
-                          }}
-                        >
-                          {formatTime(slot)}
-                        </button>
-                      );
-                    })}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* DADOS DO CLIENTE */}
-            {selectedSlot && (
-              <div style={{ marginTop: "25px" }}>
-                <p style={{ marginBottom: "20px" }}>
-                  Horário escolhido:{" "}
-                  <strong>{formatTime(selectedSlot)}</strong>
+                <p style={{ lineHeight: 1.7 }}>
+                  {success}
                 </p>
 
+                <div
+                  style={{
+                    marginTop: "22px",
+                    padding: "16px",
+                    background: "#F2E9D8",
+                    borderRadius: "10px",
+                    textAlign: "left",
+                    lineHeight: 1.9,
+                  }}
+                >
+                  <strong>Resumo da solicitação</strong>
+                  <br />
+                  Serviço: {selectedService.name}
+                  <br />
+                  Valor: {formatPrice(selectedService.price, selectedService.name)}
+                  <br />
+                  Data: {date.split("-").reverse().join("/")}
+                  <br />
+                  Horário: {formatTime(
+                    // O horário enviado fica registrado no banco.
+                    // A confirmação visual usa o horário escolhido.
+                    selectedSlot || new Date().toISOString()
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSuccess("");
+                    setDate("");
+                    setSlots([]);
+                    setSelectedSlot("");
+                    setError("");
+                  }}
+                  style={{
+                    ...primaryButtonStyle,
+                    marginTop: "24px",
+                  }}
+                >
+                  FAZER OUTRO AGENDAMENTO
+                </button>
+              </div>
+            ) : (
+              <>
+                <p className="eyebrow">RESERVE SEU MOMENTO</p>
+
+                <h2 style={{ marginBottom: "8px" }}>
+                  Seu agendamento
+                </h2>
+
+                <div
+                  style={{
+                    padding: "16px",
+                    marginBottom: "22px",
+                    background: "#F2E9D8",
+                    borderRadius: "10px",
+                  }}
+                >
+                  <p style={{ margin: 0, lineHeight: 1.9 }}>
+                    Serviço: <strong>{selectedService.name}</strong>
+                    <br />
+                    Valor: <strong>
+                      {formatPrice(selectedService.price, selectedService.name)}
+                    </strong>
+                    <br />
+                    Duração: <strong>
+                      {selectedService.duration_minutes} minutos
+                    </strong>
+                  </p>
+                </div>
+
+                {/* DATA */}
                 <label
-                  htmlFor="client-name"
+                  htmlFor="appointment-date"
                   style={{
                     display: "block",
                     marginBottom: "8px",
                     fontWeight: 600,
                   }}
                 >
-                  Seu nome completo
+                  Escolha a data
                 </label>
 
                 <input
-                  id="client-name"
-                  type="text"
-                  autoComplete="name"
-                  value={clientName}
-                  onChange={(event) => setClientName(event.target.value)}
-                  placeholder="Digite seu nome completo"
+                  id="appointment-date"
+                  type="date"
+                  value={date}
+                  min={todayInBrazil()}
+                  onChange={(event) => chooseDate(event.target.value)}
                   style={fieldStyle}
                 />
 
-                <label
-                  htmlFor="client-phone"
-                  style={{
-                    display: "block",
-                    margin: "16px 0 8px",
-                    fontWeight: 600,
-                  }}
-                >
-                  Seu WhatsApp
-                </label>
+                {/* HORÁRIOS */}
+                {date && (
+                  <div style={{ marginTop: "24px" }}>
+                    <strong>Horários disponíveis</strong>
 
-                <input
-                  id="client-phone"
-                  type="tel"
-                  autoComplete="tel"
-                  inputMode="tel"
-                  value={clientPhone}
-                  onChange={(event) => setClientPhone(event.target.value)}
-                  placeholder="(11) 99999-9999"
-                  style={fieldStyle}
-                />
+                    {loadingSlots ? (
+                      <p>Consultando horários...</p>
+                    ) : slots.length === 0 ? (
+                      <p style={{ marginTop: "12px" }}>
+                        Não há horários disponíveis nesta data.
+                        Escolha outro dia.
+                      </p>
+                    ) : (
+                      <div
+                        style={{
+                          display: "grid",
+                          gridTemplateColumns: "repeat(auto-fit, minmax(85px, 1fr))",
+                          gap: "10px",
+                          marginTop: "14px",
+                        }}
+                      >
+                        {slots.map((slot) => {
+                          const selected = selectedSlot === slot;
 
-                <button
-                  type="button"
-                  disabled={sending}
-                  onClick={bookAppointment}
-                  style={{
-                    ...primaryButtonStyle,
-                    marginTop: "22px",
-                    cursor: sending ? "wait" : "pointer",
-                    opacity: sending ? 0.7 : 1,
-                  }}
-                >
-                  {sending
-                    ? "ENVIANDO..."
-                    : "CONFIRMAR AGENDAMENTO"}
-                </button>
-              </div>
+                          return (
+                            <button
+                              type="button"
+                              key={slot}
+                              onClick={() => {
+                                setSelectedSlot(slot);
+                                setError("");
+                                setSuccess("");
+                              }}
+                              style={{
+                                padding: "13px 8px",
+                                borderRadius: "9px",
+                                border: selected
+                                  ? "2px solid #244C3B"
+                                  : "1px solid #C5A45B",
+                                background: selected ? "#244C3B" : "#FFFFFF",
+                                color: selected ? "#FFFFFF" : "#244C3B",
+                                cursor: "pointer",
+                                fontSize: "15px",
+                                fontWeight: 600,
+                              }}
+                            >
+                              {formatTime(slot)}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* DADOS DO CLIENTE */}
+                {selectedSlot && (
+                  <div style={{ marginTop: "25px" }}>
+                    <p style={{ marginBottom: "20px" }}>
+                      Horário escolhido:{" "}
+                      <strong>{formatTime(selectedSlot)}</strong>
+                    </p>
+
+                    <label
+                      htmlFor="client-name"
+                      style={{
+                        display: "block",
+                        marginBottom: "8px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Seu nome completo
+                    </label>
+
+                    <input
+                      id="client-name"
+                      type="text"
+                      autoComplete="name"
+                      value={clientName}
+                      onChange={(event) => setClientName(event.target.value)}
+                      placeholder="Digite seu nome completo"
+                      style={fieldStyle}
+                    />
+
+                    <label
+                      htmlFor="client-phone"
+                      style={{
+                        display: "block",
+                        margin: "16px 0 8px",
+                        fontWeight: 600,
+                      }}
+                    >
+                      Seu WhatsApp
+                    </label>
+
+                    <input
+                      id="client-phone"
+                      type="tel"
+                      autoComplete="tel"
+                      inputMode="tel"
+                      value={clientPhone}
+                      onChange={(event) => setClientPhone(event.target.value)}
+                      placeholder="(11) 99999-9999"
+                      style={fieldStyle}
+                    />
+
+                    <button
+                      type="button"
+                      disabled={sending}
+                      onClick={bookAppointment}
+                      style={{
+                        ...primaryButtonStyle,
+                        marginTop: "22px",
+                        cursor: sending ? "wait" : "pointer",
+                        opacity: sending ? 0.7 : 1,
+                      }}
+                    >
+                      {sending
+                        ? "ENVIANDO..."
+                        : "CONFIRMAR AGENDAMENTO"}
+                    </button>
+                  </div>
+                )}
+              </>
             )}
 
-            {/* MENSAGENS */}
+            {/* ERROS */}
             {error && (
               <p
                 role="alert"
@@ -556,19 +638,6 @@ export default function Home() {
                 }}
               >
                 {error}
-              </p>
-            )}
-
-            {success && (
-              <p
-                role="status"
-                style={{
-                  color: "#244C3B",
-                  marginTop: "18px",
-                  fontWeight: 600,
-                }}
-              >
-                {success}
               </p>
             )}
           </div>
