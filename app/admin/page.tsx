@@ -1,7 +1,7 @@
 
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { supabase } from "../../lib/supabase";
 
 type Appointment = {
@@ -13,25 +13,58 @@ type Appointment = {
   services: { name: string; price: number } | null;
 };
 
-const formatDate = (value: string) =>
-  new Intl.DateTimeFormat("pt-BR", {
+function dateInBrazil(value: string) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "America/Sao_Paulo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date(value));
+
+  const get = (type: string) =>
+    parts.find((part) => part.type === type)?.value || "";
+
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+function todayInBrazil() {
+  return dateInBrazil(new Date().toISOString());
+}
+
+function shiftDate(value: string, days: number) {
+  const [year, month, day] = value.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day + days));
+
+  return [
+    date.getUTCFullYear(),
+    String(date.getUTCMonth() + 1).padStart(2, "0"),
+    String(date.getUTCDate()).padStart(2, "0"),
+  ].join("-");
+}
+
+function formatDate(value: string) {
+  return new Intl.DateTimeFormat("pt-BR", {
     dateStyle: "short",
     timeStyle: "short",
     timeZone: "America/Sao_Paulo",
   }).format(new Date(value));
+}
 
-const money = (value: number) =>
-  Number(value).toLocaleString("pt-BR", {
+function money(value: number) {
+  return Number(value).toLocaleString("pt-BR", {
     style: "currency",
     currency: "BRL",
   });
+}
 
 export default function AdminPage() {
   const [view, setView] = useState("loading");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [filter, setFilter] = useState("all");
+  const [dateFilter, setDateFilter] = useState("today");
+  const [customDate, setCustomDate] = useState(todayInBrazil());
+  const [statusFilter, setStatusFilter] = useState("all");
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [message, setMessage] = useState("");
@@ -50,7 +83,7 @@ export default function AdminPage() {
       .order("start_at", { ascending: true });
 
     if (error) {
-      setMessage("Não foi possível carregar os agendamentos: " + error.message);
+      setMessage("Erro ao carregar agendamentos: " + error.message);
       return;
     }
 
@@ -82,7 +115,7 @@ export default function AdminPage() {
     checkAccess();
   }, []);
 
-  async function login(event: React.FormEvent) {
+  async function login(event: FormEvent) {
     event.preventDefault();
     setBusy(true);
     setMessage("");
@@ -111,12 +144,12 @@ export default function AdminPage() {
   }
 
   async function changeStatus(id: string, status: string) {
-    const confirmText =
+    const question =
       status === "confirmed"
         ? "Deseja confirmar este agendamento?"
         : "Deseja cancelar este agendamento?";
 
-    if (!window.confirm(confirmText)) return;
+    if (!window.confirm(question)) return;
 
     setBusyId(id);
     setMessage("");
@@ -136,18 +169,49 @@ export default function AdminPage() {
     setBusyId("");
   }
 
-  const filteredAppointments = appointments.filter((item) => {
-    if (filter === "all") return true;
-    return item.status === filter;
+  const today = todayInBrazil();
+
+  const dateAppointments = appointments
+    .filter((item) => {
+      const appointmentDate = dateInBrazil(item.start_at);
+
+      if (dateFilter === "today") return appointmentDate === today;
+
+      if (dateFilter === "tomorrow") {
+        return appointmentDate === shiftDate(today, 1);
+      }
+
+      if (dateFilter === "custom") {
+        return appointmentDate === customDate;
+      }
+
+      return true;
+    })
+    .sort(
+      (a, b) =>
+        new Date(a.start_at).getTime() -
+        new Date(b.start_at).getTime()
+    );
+
+  const filteredAppointments = dateAppointments.filter((item) => {
+    if (statusFilter === "all") return true;
+    return item.status === statusFilter;
   });
 
-  const pendingCount = appointments.filter(
+  const pendingCount = dateAppointments.filter(
     (item) => item.status === "pending"
   ).length;
 
-  const confirmedCount = appointments.filter(
+  const confirmedAppointments = dateAppointments.filter(
     (item) => item.status === "confirmed"
-  ).length;
+  );
+
+  const confirmedCount = confirmedAppointments.length;
+
+  const confirmedRevenue = confirmedAppointments.reduce(
+    (total, item) => total + Number(item.services?.price || 0),
+    0
+  );
 
   const cardStyle: React.CSSProperties = {
     background: "#fff",
@@ -155,6 +219,14 @@ export default function AdminPage() {
     borderRadius: 12,
     padding: 16,
     marginBottom: 14,
+  };
+
+  const buttonStyle: React.CSSProperties = {
+    padding: "11px 14px",
+    borderRadius: 8,
+    border: "1px solid #244C3B",
+    fontWeight: "bold",
+    cursor: "pointer",
   };
 
   if (view === "loading") {
@@ -244,7 +316,6 @@ export default function AdminPage() {
               border: 0,
               borderRadius: 8,
               fontWeight: "bold",
-              cursor: "pointer",
             }}
           >
             {busy ? "ENTRANDO..." : "ENTRAR"}
@@ -309,34 +380,100 @@ export default function AdminPage() {
         </button>
       </header>
 
-      <h2 style={{ marginTop: 28 }}>Visão geral</h2>
+      <h2 style={{ marginTop: 28 }}>Agenda</h2>
+
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 14,
+        }}
+      >
+        {[
+          ["today", "Hoje"],
+          ["tomorrow", "Amanhã"],
+          ["all", "Todos os dias"],
+          ["custom", "Escolher data"],
+        ].map(([value, label]) => (
+          <button
+            key={value}
+            onClick={() => setDateFilter(value)}
+            style={{
+              ...buttonStyle,
+              background: dateFilter === value ? "#244C3B" : "#fff",
+              color: dateFilter === value ? "#fff" : "#244C3B",
+            }}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+
+      {dateFilter === "custom" && (
+        <div style={{ ...cardStyle, marginBottom: 20 }}>
+          <label>
+            <strong>Escolha o dia:</strong>
+          </label>
+          <input
+            type="date"
+            value={customDate}
+            onChange={(e) => setCustomDate(e.target.value)}
+            style={{
+              display: "block",
+              width: "100%",
+              padding: 13,
+              marginTop: 10,
+              border: "1px solid #ddd",
+              borderRadius: 8,
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+      )}
+
+      <h2>Resumo financeiro e atendimentos</h2>
 
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+          gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
           gap: 12,
         }}
       >
         <div style={cardStyle}>
-          <p>Solicitações</p>
-          <h2>{pendingCount}</h2>
+          <p style={{ margin: 0 }}>Pendentes</p>
+          <h2 style={{ color: "#B7791F" }}>{pendingCount}</h2>
         </div>
 
         <div style={cardStyle}>
-          <p>Confirmados</p>
-          <h2>{confirmedCount}</h2>
+          <p style={{ margin: 0 }}>Confirmados</p>
+          <h2 style={{ color: "#244C3B" }}>{confirmedCount}</h2>
         </div>
 
         <div style={cardStyle}>
-          <p>Total na agenda</p>
-          <h2>{appointments.length}</h2>
+          <p style={{ margin: 0 }}>Faturamento confirmado</p>
+          <h2 style={{ color: "#244C3B", fontSize: 21 }}>
+            {money(confirmedRevenue)}
+          </h2>
         </div>
       </div>
 
+      <p style={{ color: "#777", fontSize: 13 }}>
+        Os números acima consideram o período selecionado e os valores
+        cadastrados nos serviços.
+      </p>
+
       <h2 style={{ marginTop: 28 }}>Agendamentos</h2>
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 18 }}>
+      <div
+        style={{
+          display: "flex",
+          gap: 8,
+          flexWrap: "wrap",
+          marginBottom: 18,
+        }}
+      >
         {[
           ["all", "Todos"],
           ["pending", "Pendentes"],
@@ -345,13 +482,11 @@ export default function AdminPage() {
         ].map(([value, label]) => (
           <button
             key={value}
-            onClick={() => setFilter(value)}
+            onClick={() => setStatusFilter(value)}
             style={{
-              padding: "10px 13px",
-              borderRadius: 20,
-              border: "1px solid #244C3B",
-              background: filter === value ? "#244C3B" : "#fff",
-              color: filter === value ? "#fff" : "#244C3B",
+              ...buttonStyle,
+              background: statusFilter === value ? "#244C3B" : "#fff",
+              color: statusFilter === value ? "#fff" : "#244C3B",
             }}
           >
             {label}
@@ -367,7 +502,7 @@ export default function AdminPage() {
 
       {filteredAppointments.length === 0 && (
         <div style={cardStyle}>
-          Nenhum agendamento encontrado nesta categoria.
+          Nenhum agendamento encontrado neste período.
         </div>
       )}
 
@@ -415,11 +550,9 @@ export default function AdminPage() {
                 disabled={busyId === item.id}
                 onClick={() => changeStatus(item.id, "confirmed")}
                 style={{
-                  padding: 11,
+                  ...buttonStyle,
                   background: "#244C3B",
                   color: "#fff",
-                  border: 0,
-                  borderRadius: 7,
                 }}
               >
                 CONFIRMAR
@@ -429,11 +562,9 @@ export default function AdminPage() {
                 disabled={busyId === item.id}
                 onClick={() => changeStatus(item.id, "cancelled")}
                 style={{
-                  padding: 11,
+                  ...buttonStyle,
                   background: "#A33B32",
                   color: "#fff",
-                  border: 0,
-                  borderRadius: 7,
                 }}
               >
                 CANCELAR
@@ -460,4 +591,4 @@ export default function AdminPage() {
       </button>
     </main>
   );
-          }
+}
