@@ -6,11 +6,28 @@ import { supabase } from "../../lib/supabase";
 
 type Appointment = {
   id: string;
+  client_id: string;
+  service_id: string;
   start_at: string;
   end_at: string;
   status: string;
   clients: { name: string; phone: string } | null;
   services: { name: string; price: number } | null;
+};
+
+type Service = {
+  id: string;
+  name: string;
+  duration_minutes: number;
+};
+
+type EditForm = {
+  id: string;
+  name: string;
+  phone: string;
+  serviceId: string;
+  date: string;
+  time: string;
 };
 
 function dateInBrazil(value: string) {
@@ -57,23 +74,39 @@ function money(value: number) {
   });
 }
 
+function getBrazilTime(value: string) {
+  return new Intl.DateTimeFormat("en-GB", {
+    timeZone: "America/Sao_Paulo",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).format(new Date(value));
+}
+
 export default function AdminPage() {
   const [view, setView] = useState("loading");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+
   const [appointments, setAppointments] = useState<Appointment[]>([]);
+  const [services, setServices] = useState<Service[]>([]);
+
   const [dateFilter, setDateFilter] = useState("today");
   const [customDate, setCustomDate] = useState(todayInBrazil());
   const [statusFilter, setStatusFilter] = useState("all");
+
   const [busy, setBusy] = useState(false);
   const [busyId, setBusyId] = useState("");
   const [message, setMessage] = useState("");
+  const [editing, setEditing] = useState<EditForm | null>(null);
 
   async function loadAppointments() {
     const { data, error } = await supabase
       .from("appointments")
       .select(`
         id,
+        client_id,
+        service_id,
         start_at,
         end_at,
         status,
@@ -88,6 +121,20 @@ export default function AdminPage() {
     }
 
     setAppointments((data || []) as unknown as Appointment[]);
+  }
+
+  async function loadServices() {
+    const { data, error } = await supabase
+      .from("services")
+      .select("id, name, duration_minutes")
+      .order("name");
+
+    if (error) {
+      setMessage("Erro ao carregar serviços: " + error.message);
+      return;
+    }
+
+    setServices(data || []);
   }
 
   async function checkAccess() {
@@ -108,7 +155,7 @@ export default function AdminPage() {
     }
 
     setView("dashboard");
-    await loadAppointments();
+    await Promise.all([loadAppointments(), loadServices()]);
   }
 
   useEffect(() => {
@@ -139,17 +186,21 @@ export default function AdminPage() {
     await supabase.auth.signOut();
     setAppointments([]);
     setPassword("");
+    setEditing(null);
     setView("login");
     setMessage("");
   }
 
   async function changeStatus(id: string, status: string) {
-    const question =
-      status === "confirmed"
-        ? "Deseja confirmar este agendamento?"
-        : "Deseja cancelar este agendamento?";
+    const questions: Record<string, string> = {
+      confirmed: "Deseja confirmar este agendamento?",
+      cancelled: "Deseja cancelar este agendamento?",
+      completed: "Confirmar que este atendimento foi realizado?",
+    };
 
-    if (!window.confirm(question)) return;
+    if (!window.confirm(questions[status] || "Deseja alterar o status?")) {
+      return;
+    }
 
     setBusyId(id);
     setMessage("");
@@ -162,7 +213,116 @@ export default function AdminPage() {
     if (error) {
       setMessage("Erro ao atualizar: " + error.message);
     } else {
-      setMessage("Agendamento atualizado com sucesso!");
+      setMessage(
+        status === "completed"
+          ? "Atendimento marcado como concluído!"
+          : "Agendamento atualizado com sucesso!"
+      );
+      await loadAppointments();
+    }
+
+    setBusyId("");
+  }
+
+  function startEditing(item: Appointment) {
+    setEditing({
+      id: item.id,
+      name: item.clients?.name || "",
+      phone: item.clients?.phone || "",
+      serviceId: item.service_id,
+      date: dateInBrazil(item.start_at),
+      time: getBrazilTime(item.start_at),
+    });
+
+    setMessage("");
+  }
+
+  async function saveEdit(event: FormEvent) {
+    event.preventDefault();
+
+    if (!editing) return;
+
+    if (!editing.name.trim() || !editing.phone.trim()) {
+      setMessage("Preencha o nome e o telefone da cliente.");
+      return;
+    }
+
+    if (!editing.date || !editing.time) {
+      setMessage("Escolha a data e o horário.");
+      return;
+    }
+
+    const selectedService = services.find(
+      (service) => service.id === editing.serviceId
+    );
+
+    if (!selectedService) {
+      setMessage("Selecione um serviço válido.");
+      return;
+    }
+
+    // Horário local de São Paulo (UTC-3).
+    const startAt = new Date(
+      `${editing.date}T${editing.time}:00-03:00`
+    );
+
+    if (Number.isNaN(startAt.getTime())) {
+      setMessage("Data ou horário inválido.");
+      return;
+    }
+
+    setBusy(true);
+    setMessage("");
+
+    const { data, error } = await supabase.rpc(
+      "admin_edit_appointment",
+      {
+        p_appointment_id: editing.id,
+        p_client_name: editing.name.trim(),
+        p_client_phone: editing.phone.trim(),
+        p_service_id: editing.serviceId,
+        p_start_at: startAt.toISOString(),
+      }
+    );
+
+    if (error) {
+      setMessage("Erro ao editar: " + error.message);
+      setBusy(false);
+      return;
+    }
+
+    if (!data?.success) {
+      setMessage(data?.message || "Não foi possível editar o agendamento.");
+      setBusy(false);
+      return;
+    }
+
+    setEditing(null);
+    setMessage("Agendamento editado com sucesso!");
+    await loadAppointments();
+    setBusy(false);
+  }
+
+  async function deleteAppointment(id: string) {
+    const confirmed = window.confirm(
+      "ATENÇÃO: deseja realmente excluir este agendamento? Esta ação não poderá ser desfeita."
+    );
+
+    if (!confirmed) return;
+
+    setBusyId(id);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("appointments")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      setMessage("Erro ao excluir: " + error.message);
+    } else {
+      setMessage("Agendamento excluído com sucesso!");
+      if (editing?.id === id) setEditing(null);
       await loadAppointments();
     }
 
@@ -202,13 +362,17 @@ export default function AdminPage() {
     (item) => item.status === "pending"
   ).length;
 
-  const confirmedAppointments = dateAppointments.filter(
+  const confirmedCount = dateAppointments.filter(
     (item) => item.status === "confirmed"
+  ).length;
+
+  const completedAppointments = dateAppointments.filter(
+    (item) => item.status === "completed"
   );
 
-  const confirmedCount = confirmedAppointments.length;
+  const completedCount = completedAppointments.length;
 
-  const confirmedRevenue = confirmedAppointments.reduce(
+  const completedRevenue = completedAppointments.reduce(
     (total, item) => total + Number(item.services?.price || 0),
     0
   );
@@ -227,6 +391,17 @@ export default function AdminPage() {
     border: "1px solid #244C3B",
     fontWeight: "bold",
     cursor: "pointer",
+  };
+
+  const inputStyle: React.CSSProperties = {
+    width: "100%",
+    padding: 12,
+    marginTop: 7,
+    marginBottom: 14,
+    border: "1px solid #ddd",
+    borderRadius: 8,
+    boxSizing: "border-box",
+    background: "#fff",
   };
 
   if (view === "loading") {
@@ -275,14 +450,7 @@ export default function AdminPage() {
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             required
-            style={{
-              width: "100%",
-              padding: 13,
-              margin: "8px 0 18px",
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              boxSizing: "border-box",
-            }}
+            style={inputStyle}
           />
 
           <label>Senha</label>
@@ -291,19 +459,10 @@ export default function AdminPage() {
             value={password}
             onChange={(e) => setPassword(e.target.value)}
             required
-            style={{
-              width: "100%",
-              padding: 13,
-              margin: "8px 0 18px",
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              boxSizing: "border-box",
-            }}
+            style={inputStyle}
           />
 
-          {message && (
-            <p style={{ color: "#b42318" }}>{message}</p>
-          )}
+          {message && <p style={{ color: "#b42318" }}>{message}</p>}
 
           <button
             type="submit"
@@ -411,28 +570,18 @@ export default function AdminPage() {
       </div>
 
       {dateFilter === "custom" && (
-        <div style={{ ...cardStyle, marginBottom: 20 }}>
-          <label>
-            <strong>Escolha o dia:</strong>
-          </label>
+        <div style={cardStyle}>
+          <label><strong>Escolha o dia:</strong></label>
           <input
             type="date"
             value={customDate}
             onChange={(e) => setCustomDate(e.target.value)}
-            style={{
-              display: "block",
-              width: "100%",
-              padding: 13,
-              marginTop: 10,
-              border: "1px solid #ddd",
-              borderRadius: 8,
-              boxSizing: "border-box",
-            }}
+            style={inputStyle}
           />
         </div>
       )}
 
-      <h2>Resumo financeiro e atendimentos</h2>
+      <h2>Resumo de atendimentos</h2>
 
       <div
         style={{
@@ -452,16 +601,21 @@ export default function AdminPage() {
         </div>
 
         <div style={cardStyle}>
-          <p style={{ margin: 0 }}>Faturamento confirmado</p>
+          <p style={{ margin: 0 }}>Concluídos</p>
+          <h2 style={{ color: "#244C3B" }}>{completedCount}</h2>
+        </div>
+
+        <div style={cardStyle}>
+          <p style={{ margin: 0 }}>Faturamento realizado</p>
           <h2 style={{ color: "#244C3B", fontSize: 21 }}>
-            {money(confirmedRevenue)}
+            {money(completedRevenue)}
           </h2>
         </div>
       </div>
 
       <p style={{ color: "#777", fontSize: 13 }}>
-        Os números acima consideram o período selecionado e os valores
-        cadastrados nos serviços.
+        O faturamento considera somente os agendamentos marcados como
+        concluídos e os preços cadastrados nos serviços.
       </p>
 
       <h2 style={{ marginTop: 28 }}>Agendamentos</h2>
@@ -478,6 +632,7 @@ export default function AdminPage() {
           ["all", "Todos"],
           ["pending", "Pendentes"],
           ["confirmed", "Confirmados"],
+          ["completed", "Concluídos"],
           ["cancelled", "Cancelados"],
         ].map(([value, label]) => (
           <button
@@ -498,6 +653,106 @@ export default function AdminPage() {
         <p style={{ background: "#fff", padding: 12, borderRadius: 8 }}>
           {message}
         </p>
+      )}
+
+      {editing && (
+        <form
+          onSubmit={saveEdit}
+          style={{
+            ...cardStyle,
+            border: "2px solid #C5A45B",
+          }}
+        >
+          <h3 style={{ color: "#244C3B", marginTop: 0 }}>
+            Editar agendamento
+          </h3>
+
+          <label>Nome da cliente</label>
+          <input
+            value={editing.name}
+            onChange={(e) =>
+              setEditing({ ...editing, name: e.target.value })
+            }
+            required
+            style={inputStyle}
+          />
+
+          <label>Telefone</label>
+          <input
+            value={editing.phone}
+            onChange={(e) =>
+              setEditing({ ...editing, phone: e.target.value })
+            }
+            required
+            style={inputStyle}
+          />
+
+          <label>Serviço</label>
+          <select
+            value={editing.serviceId}
+            onChange={(e) =>
+              setEditing({ ...editing, serviceId: e.target.value })
+            }
+            required
+            style={inputStyle}
+          >
+            <option value="">Selecione o serviço</option>
+            {services.map((service) => (
+              <option key={service.id} value={service.id}>
+                {service.name} ({service.duration_minutes} min)
+              </option>
+            ))}
+          </select>
+
+          <label>Data</label>
+          <input
+            type="date"
+            value={editing.date}
+            onChange={(e) =>
+              setEditing({ ...editing, date: e.target.value })
+            }
+            required
+            style={inputStyle}
+          />
+
+          <label>Horário de início</label>
+          <input
+            type="time"
+            value={editing.time}
+            onChange={(e) =>
+              setEditing({ ...editing, time: e.target.value })
+            }
+            required
+            style={inputStyle}
+          />
+
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              type="submit"
+              disabled={busy}
+              style={{
+                ...buttonStyle,
+                background: "#244C3B",
+                color: "#fff",
+              }}
+            >
+              {busy ? "SALVANDO..." : "SALVAR ALTERAÇÕES"}
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setEditing(null)}
+              disabled={busy}
+              style={{
+                ...buttonStyle,
+                background: "#fff",
+                color: "#244C3B",
+              }}
+            >
+              FECHAR
+            </button>
+          </div>
+        </form>
       )}
 
       {filteredAppointments.length === 0 && (
@@ -539,43 +794,91 @@ export default function AdminPage() {
               ? "Aguardando confirmação"
               : item.status === "confirmed"
               ? "Confirmado"
+              : item.status === "completed"
+              ? "Concluído"
               : item.status === "cancelled"
               ? "Cancelado"
               : item.status}
           </p>
 
-          {item.status === "pending" && (
-            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {item.status === "pending" && (
+              <>
+                <button
+                  disabled={busyId === item.id}
+                  onClick={() => changeStatus(item.id, "confirmed")}
+                  style={{
+                    ...buttonStyle,
+                    background: "#244C3B",
+                    color: "#fff",
+                  }}
+                >
+                  CONFIRMAR
+                </button>
+
+                <button
+                  disabled={busyId === item.id}
+                  onClick={() => changeStatus(item.id, "cancelled")}
+                  style={{
+                    ...buttonStyle,
+                    background: "#A33B32",
+                    color: "#fff",
+                  }}
+                >
+                  CANCELAR
+                </button>
+              </>
+            )}
+
+            {item.status === "confirmed" && (
               <button
                 disabled={busyId === item.id}
-                onClick={() => changeStatus(item.id, "confirmed")}
+                onClick={() => changeStatus(item.id, "completed")}
                 style={{
                   ...buttonStyle,
                   background: "#244C3B",
                   color: "#fff",
                 }}
               >
-                CONFIRMAR
+                CONCLUIR ATENDIMENTO
               </button>
+            )}
 
+            {item.status !== "cancelled" && (
               <button
                 disabled={busyId === item.id}
-                onClick={() => changeStatus(item.id, "cancelled")}
+                onClick={() => startEditing(item)}
                 style={{
                   ...buttonStyle,
-                  background: "#A33B32",
-                  color: "#fff",
+                  background: "#C5A45B",
+                  color: "#17382B",
                 }}
               >
-                CANCELAR
+                EDITAR
               </button>
-            </div>
-          )}
+            )}
+
+            <button
+              disabled={busyId === item.id}
+              onClick={() => deleteAppointment(item.id)}
+              style={{
+                ...buttonStyle,
+                background: "#A33B32",
+                color: "#fff",
+                borderColor: "#A33B32",
+              }}
+            >
+              EXCLUIR
+            </button>
+          </div>
         </article>
       ))}
 
       <button
-        onClick={loadAppointments}
+        onClick={() => {
+          loadAppointments();
+          loadServices();
+        }}
         style={{
           width: "100%",
           padding: 14,
