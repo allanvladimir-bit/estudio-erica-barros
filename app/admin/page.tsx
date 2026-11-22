@@ -16,6 +16,7 @@ type Appointment = {
   start_at: string;
   end_at: string;
   status: string;
+  price_at_booking: number | null;
   clients: { name: string; phone: string } | null;
   services: { name: string; price: number } | null;
 };
@@ -23,7 +24,9 @@ type Appointment = {
 type Service = {
   id: string;
   name: string;
+  price: number;
   duration_minutes: number;
+  active: boolean;
 };
 
 type EditForm = {
@@ -33,6 +36,13 @@ type EditForm = {
   serviceId: string;
   date: string;
   time: string;
+};
+
+type ServiceForm = {
+  id: string;
+  name: string;
+  price: string;
+  duration: string;
 };
 
 function dateInBrazil(value: string) {
@@ -142,6 +152,9 @@ export default function AdminPage() {
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState<EditForm | null>(null);
 
+  const [serviceForm, setServiceForm] = useState<ServiceForm | null>(null);
+  const [serviceBusy, setServiceBusy] = useState(false);
+
   async function loadAppointments() {
     const { data, error } = await supabase
       .from("appointments")
@@ -152,6 +165,7 @@ export default function AdminPage() {
         start_at,
         end_at,
         status,
+        price_at_booking,
         clients ( name, phone ),
         services ( name, price )
       `)
@@ -168,7 +182,7 @@ export default function AdminPage() {
   async function loadServices() {
     const { data, error } = await supabase
       .from("services")
-      .select("id, name, duration_minutes")
+      .select("id, name, price, duration_minutes, active")
       .order("name");
 
     if (error) {
@@ -176,7 +190,7 @@ export default function AdminPage() {
       return;
     }
 
-    setServices(data || []);
+    setServices((data || []) as Service[]);
   }
 
   async function checkAccess() {
@@ -227,8 +241,10 @@ export default function AdminPage() {
   async function logout() {
     await supabase.auth.signOut();
     setAppointments([]);
+    setServices([]);
     setPassword("");
     setEditing(null);
+    setServiceForm(null);
     setView("login");
     setMessage("");
   }
@@ -370,6 +386,132 @@ export default function AdminPage() {
     setBusyId("");
   }
 
+  function newService() {
+    setServiceForm({
+      id: "",
+      name: "",
+      price: "",
+      duration: "60",
+    });
+    setMessage("");
+  }
+
+  function editService(service: Service) {
+    setServiceForm({
+      id: service.id,
+      name: service.name,
+      price: String(service.price),
+      duration: String(service.duration_minutes),
+    });
+    setMessage("");
+  }
+
+  async function saveService(event: FormEvent) {
+    event.preventDefault();
+
+    if (!serviceForm) return;
+
+    const name = serviceForm.name.trim();
+    const price = Number(serviceForm.price.replace(",", "."));
+    const duration = Number(serviceForm.duration);
+
+    if (!name) {
+      setMessage("Informe o nome do serviço.");
+      return;
+    }
+
+    if (!Number.isFinite(price) || price < 0) {
+      setMessage("Informe um preço válido.");
+      return;
+    }
+
+    if (
+      !Number.isInteger(duration) ||
+      duration <= 0
+    ) {
+      setMessage("A duração deve ser um número inteiro de minutos.");
+      return;
+    }
+
+    setServiceBusy(true);
+    setMessage("");
+
+    let error;
+
+    if (serviceForm.id) {
+      const result = await supabase
+        .from("services")
+        .update({
+          name,
+          price,
+          duration_minutes: duration,
+        })
+        .eq("id", serviceForm.id);
+
+      error = result.error;
+    } else {
+      const result = await supabase
+        .from("services")
+        .insert({
+          name,
+          price,
+          duration_minutes: duration,
+          active: true,
+        });
+
+      error = result.error;
+    }
+
+    if (error) {
+      setMessage("Erro ao salvar serviço: " + error.message);
+      setServiceBusy(false);
+      return;
+    }
+
+    setServiceForm(null);
+    setMessage(
+      "Serviço " +
+        (serviceForm.id ? "atualizado" : "cadastrado") +
+        " com sucesso!"
+    );
+
+    await loadServices();
+    setServiceBusy(false);
+  }
+
+  async function toggleService(service: Service) {
+    const action = service.active ? "desativar" : "ativar";
+
+    if (
+      !window.confirm(
+        `Deseja realmente ${action} o serviço "${service.name}"?`
+      )
+    ) {
+      return;
+    }
+
+    setBusyId(service.id);
+    setMessage("");
+
+    const { error } = await supabase
+      .from("services")
+      .update({ active: !service.active })
+      .eq("id", service.id);
+
+    if (error) {
+      setMessage("Erro ao alterar serviço: " + error.message);
+    } else {
+      setMessage(
+        service.active
+          ? "Serviço desativado com sucesso!"
+          : "Serviço ativado com sucesso!"
+      );
+      await loadServices();
+    }
+
+    setBusyId("");
+  }
+
   const today = todayInBrazil();
 
   const dateAppointments = appointments
@@ -414,7 +556,9 @@ export default function AdminPage() {
   const completedCount = completedAppointments.length;
 
   const completedRevenue = completedAppointments.reduce(
-    (total, item) => total + Number(item.services?.price || 0),
+    (total, item) =>
+      total +
+      Number(item.price_at_booking ?? item.services?.price ?? 0),
     0
   );
 
@@ -453,6 +597,10 @@ export default function AdminPage() {
     boxSizing: "border-box",
     background: "#fff",
   };
+
+  function appointmentPrice(item: Appointment) {
+    return item.price_at_booking ?? item.services?.price ?? null;
+  }
 
   if (view === "loading") {
     return (
@@ -589,7 +737,197 @@ export default function AdminPage() {
         </button>
       </header>
 
-      <h2 style={{ marginTop: 28 }}>Agenda</h2>
+      {/* GERENCIAMENTO DE SERVIÇOS */}
+      <section style={{ marginTop: 28 }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+            gap: 10,
+            flexWrap: "wrap",
+          }}
+        >
+          <h2 style={{ margin: 0 }}>Gerenciar serviços</h2>
+
+          <button
+            onClick={newService}
+            style={{
+              ...buttonStyle,
+              background: "#244C3B",
+              color: "#fff",
+            }}
+          >
+            + NOVO SERVIÇO
+          </button>
+        </div>
+
+        <p style={{ color: "#777", fontSize: 14 }}>
+          Cadastre serviços, altere preços e duração ou desative serviços
+          que não estão mais disponíveis.
+        </p>
+
+        {serviceForm && (
+          <form
+            onSubmit={saveService}
+            style={{
+              ...cardStyle,
+              border: "2px solid #C5A45B",
+            }}
+          >
+            <h3 style={{ color: "#244C3B", marginTop: 0 }}>
+              {serviceForm.id ? "Editar serviço" : "Cadastrar novo serviço"}
+            </h3>
+
+            <label>Nome do serviço</label>
+            <input
+              value={serviceForm.name}
+              onChange={(e) =>
+                setServiceForm({
+                  ...serviceForm,
+                  name: e.target.value,
+                })
+              }
+              placeholder="Ex.: Corte feminino"
+              required
+              style={inputStyle}
+            />
+
+            <label>Preço (R$)</label>
+            <input
+              type="number"
+              min="0"
+              step="0.01"
+              value={serviceForm.price}
+              onChange={(e) =>
+                setServiceForm({
+                  ...serviceForm,
+                  price: e.target.value,
+                })
+              }
+              placeholder="Ex.: 40,00"
+              required
+              style={inputStyle}
+            />
+
+            <label>Duração em minutos</label>
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={serviceForm.duration}
+              onChange={(e) =>
+                setServiceForm({
+                  ...serviceForm,
+                  duration: e.target.value,
+                })
+              }
+              placeholder="Ex.: 60"
+              required
+              style={inputStyle}
+            />
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <button
+                type="submit"
+                disabled={serviceBusy}
+                style={{
+                  ...buttonStyle,
+                  background: "#244C3B",
+                  color: "#fff",
+                }}
+              >
+                {serviceBusy ? "SALVANDO..." : "SALVAR SERVIÇO"}
+              </button>
+
+              <button
+                type="button"
+                disabled={serviceBusy}
+                onClick={() => setServiceForm(null)}
+                style={{
+                  ...buttonStyle,
+                  background: "#fff",
+                  color: "#244C3B",
+                }}
+              >
+                CANCELAR
+              </button>
+            </div>
+          </form>
+        )}
+
+        {services.length === 0 ? (
+          <div style={cardStyle}>
+            Nenhum serviço cadastrado.
+          </div>
+        ) : (
+          services.map((service) => (
+            <article key={service.id} style={cardStyle}>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  gap: 8,
+                  flexWrap: "wrap",
+                }}
+              >
+                <h3 style={{ margin: 0, color: "#244C3B" }}>
+                  {service.name}
+                </h3>
+
+                <strong
+                  style={{
+                    color: service.active ? "#39834B" : "#A33B32",
+                    fontSize: 13,
+                  }}
+                >
+                  {service.active ? "ATIVO" : "INATIVO"}
+                </strong>
+              </div>
+
+              <p style={{ marginBottom: 5 }}>
+                <strong>Preço:</strong> {money(service.price)}
+              </p>
+
+              <p style={{ marginTop: 5 }}>
+                <strong>Duração:</strong> {service.duration_minutes} minutos
+              </p>
+
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <button
+                  onClick={() => editService(service)}
+                  style={{
+                    ...buttonStyle,
+                    background: "#C5A45B",
+                    color: "#17382B",
+                  }}
+                >
+                  EDITAR
+                </button>
+
+                <button
+                  disabled={busyId === service.id}
+                  onClick={() => toggleService(service)}
+                  style={{
+                    ...buttonStyle,
+                    background: service.active ? "#A33B32" : "#244C3B",
+                    color: "#fff",
+                    borderColor: service.active ? "#A33B32" : "#244C3B",
+                  }}
+                >
+                  {busyId === service.id
+                    ? "AGUARDE..."
+                    : service.active
+                    ? "DESATIVAR"
+                    : "ATIVAR"}
+                </button>
+              </div>
+            </article>
+          ))
+        )}
+      </section>
+
+      <h2 style={{ marginTop: 32 }}>Agenda</h2>
 
       {/* AGENDA VISUAL DIÁRIA E SEMANAL */}
       <section
@@ -773,8 +1111,8 @@ export default function AdminPage() {
                     </p>
 
                     <p style={{ margin: "4px 0", fontSize: 14 }}>
-                      {item.services?.price != null
-                        ? money(item.services.price)
+                      {appointmentPrice(item) != null
+                        ? money(appointmentPrice(item) as number)
                         : "Valor não informado"}
                     </p>
 
@@ -797,7 +1135,7 @@ export default function AdminPage() {
         })}
       </section>
 
-      {/* FILTROS ANTIGOS */}
+      {/* FILTROS */}
       <h2 style={{ marginTop: 28 }}>Filtrar agendamentos</h2>
 
       <div
@@ -876,8 +1214,8 @@ export default function AdminPage() {
       </div>
 
       <p style={{ color: "#777", fontSize: 13 }}>
-        O faturamento considera somente os agendamentos marcados como
-        concluídos e os preços cadastrados nos serviços.
+        O faturamento considera somente atendimentos concluídos e utiliza
+        o preço registrado no momento do agendamento.
       </p>
 
       {/* LISTA DE AGENDAMENTOS */}
@@ -963,7 +1301,9 @@ export default function AdminPage() {
             <option value="">Selecione o serviço</option>
             {services.map((service) => (
               <option key={service.id} value={service.id}>
-                {service.name} ({service.duration_minutes} min)
+                {service.name}
+                {service.active ? "" : " (Inativo)"} (
+                {service.duration_minutes} min)
               </option>
             ))}
           </select>
@@ -1043,8 +1383,8 @@ export default function AdminPage() {
 
           <p>
             <strong>Valor:</strong>{" "}
-            {item.services?.price != null
-              ? money(item.services.price)
+            {appointmentPrice(item) != null
+              ? money(appointmentPrice(item) as number)
               : "Não informado"}
           </p>
 
@@ -1145,7 +1485,7 @@ export default function AdminPage() {
           marginTop: 10,
         }}
       >
-        ATUALIZAR AGENDAMENTOS
+        ATUALIZAR AGENDAMENTOS E SERVIÇOS
       </button>
     </main>
   );
