@@ -1,16 +1,53 @@
 
-const services = [
-  { name: "Corte", price: "R$ 40,00" },
-  { name: "Escova", price: "R$ 30,00" },
-  { name: "Escova + Hidratação", price: "R$ 50,00" },
-  { name: "Cronograma Capilar", price: "R$ 150,00" },
-  { name: "Trança", price: "A partir de R$ 150,00" },
-  { name: "Coloração somente tinta", price: "R$ 25,00" },
-  { name: "Coloração + Escova", price: "R$ 40,00" },
-  { name: "Progressiva", price: "R$ 200,00" },
-];
+"use client";
+
+import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabase";
+
+type Service = {
+  id: string;
+  name: string;
+  price: number;
+  duration_minutes: number;
+};
 
 export default function Home() {
+  const [services, setServices] = useState<Service[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    async function loadServices() {
+      const { data, error } = await supabase
+        .from("services")
+        .select("id, name, price, duration_minutes")
+        .eq("active", true)
+        .order("name");
+
+      if (error) {
+        setError("Não foi possível carregar os serviços.");
+        console.error(error);
+      } else {
+        setServices(data || []);
+      }
+
+      setLoading(false);
+    }
+
+    loadServices();
+  }, []);
+
+  function formatPrice(price: number, name: string) {
+    const value = price.toLocaleString("pt-BR", {
+      style: "currency",
+      currency: "BRL",
+    });
+
+    return name.toLowerCase().includes("trança")
+      ? `A partir de ${value}`
+      : value;
+  }
+
   return (
     <main>
       <header className="header">
@@ -47,15 +84,25 @@ export default function Home() {
         </p>
 
         <div className="service-grid">
-          {services.map((service) => (
-            <article className="service-card" key={service.name}>
-              <div>
-                <h3>{service.name}</h3>
-                <p>Estúdio Erica Barros</p>
-              </div>
-              <strong>{service.price}</strong>
-            </article>
-          ))}
+          {loading ? (
+            <p>Carregando serviços...</p>
+          ) : error ? (
+            <p>{error}</p>
+          ) : services.length === 0 ? (
+            <p>Nenhum serviço disponível no momento.</p>
+          ) : (
+            services.map((service) => (
+              <article className="service-card" key={service.id}>
+                <div>
+                  <h3>{service.name}</h3>
+                  <p>Estúdio Erica Barros</p>
+                </div>
+                <strong>
+                  {formatPrice(service.price, service.name)}
+                </strong>
+              </article>
+            ))
+          )}
         </div>
       </section>
 
@@ -63,8 +110,7 @@ export default function Home() {
         <p className="eyebrow">SEU MOMENTO COMEÇA AQUI</p>
         <h2>Vamos agendar?</h2>
         <p>
-          Escolha seu serviço e entre em contato para consultar
-          os horários disponíveis.
+          Escolha seu serviço e venha reservar seu horário.
         </p>
         <a href="#servicos" className="gold-button">
           VER SERVIÇOS
