@@ -8,6 +8,7 @@ import {
 } from "react";
 import { supabase } from "../../lib/supabase";
 import ClientHistory from "./history";
+import FinanceReport from "./finance";
 type Appointment = {
   id: string;
   client_id: string;
