@@ -276,28 +276,44 @@ export default function Home() {
         </a>
       </header>
 
-      {/* APRESENTAÇÃO */}
-      <section className="hero">
-        <p className="eyebrow">
-          BELEZA • CUIDADO • ELEGÂNCIA
-        </p>
+            {/* APRESENTAÇÃO COM FOTO DA ERICA */}
+      <section
+        aria-label="Apresentação do Estúdio Erica Barros"
+        style={{
+          position: "relative",
+          width: "100%",
+          overflow: "hidden",
+          lineHeight: 0,
+          background: "#17382B",
+        }}
+      >
+        <img
+          src="/file_000000003db4820e84b2d7788a1d100e.png"
+          alt="Estúdio Erica Barros — beleza, autoestima e bem-estar"
+          style={{
+            display: "block",
+            width: "100%",
+            height: "auto",
+          }}
+        />
 
-        <h1>
-          Sua beleza merece
-          <br />
-          um momento especial.
-        </h1>
-
-        <p className="hero-text">
-          Um espaço dedicado a realçar sua beleza e cuidar de você
-          com carinho.
-        </p>
-
-        <a href="#servicos" className="gold-button">
-          ESCOLHER MEU SERVIÇO
-        </a>
-
-        <div className="hero-decoration">EB</div>
+        {/* ÁREA CLICÁVEL SOBRE O BOTÃO DA IMAGEM */}
+        <a
+          href="#servicos"
+          aria-label="Agende seu horário"
+          style={{
+            position: "absolute",
+            left: "9.7%",
+            top: "69.2%",
+            width: "29.3%",
+            height: "9.2%",
+            display: "block",
+            borderRadius: "50px",
+            cursor: "pointer",
+            zIndex: 2,
+            WebkitTapHighlightColor: "transparent",
+          }}
+        />
       </section>
 
       {/* SERVIÇOS */}
