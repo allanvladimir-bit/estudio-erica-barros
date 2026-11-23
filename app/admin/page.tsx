@@ -736,7 +736,7 @@ export default function AdminPage() {
           SAIR
         </button>
       </header>
-
+<FinanceReport />
       {/* GERENCIAMENTO DE SERVIÇOS - VERSÃO ATUALIZADA */}
       <section style={{ marginTop: 28 }}>
         <div
