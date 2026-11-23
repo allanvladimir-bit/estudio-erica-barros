@@ -7,7 +7,7 @@ import {
   type CSSProperties,
 } from "react";
 import { supabase } from "../../lib/supabase";
-
+import ClientHistory from "./history";
 type Appointment = {
   id: string;
   client_id: string;
@@ -925,7 +925,8 @@ export default function AdminPage() {
           ))
         )}
       </section>
-
+      
+      <ClientHistory />
       <h2 style={{ marginTop: 32 }}>Agenda</h2>
 
       {/* AGENDA VISUAL DIÁRIA E SEMANAL */}
