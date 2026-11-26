@@ -1,3 +1,4 @@
+
 "use client";
 
 import {
@@ -9,6 +10,8 @@ import {
 import { supabase } from "../../lib/supabase";
 import ClientHistory from "./history";
 import FinanceReport from "./finance";
+import PushNotifications from "./PushNotifications";
+
 type Appointment = {
   id: string;
   client_id: string;
@@ -425,10 +428,7 @@ export default function AdminPage() {
       return;
     }
 
-    if (
-      !Number.isInteger(duration) ||
-      duration <= 0
-    ) {
+    if (!Number.isInteger(duration) || duration <= 0) {
       setMessage("A duração deve ser um número inteiro de minutos.");
       return;
     }
@@ -736,7 +736,11 @@ export default function AdminPage() {
           SAIR
         </button>
       </header>
-<FinanceReport />
+
+      <PushNotifications />
+
+      <FinanceReport />
+
       {/* GERENCIAMENTO DE SERVIÇOS - VERSÃO ATUALIZADA */}
       <section style={{ marginTop: 28 }}>
         <div
@@ -926,7 +930,7 @@ export default function AdminPage() {
           ))
         )}
       </section>
-      
+
       <ClientHistory />
       <h2 style={{ marginTop: 32 }}>Agenda</h2>
 
