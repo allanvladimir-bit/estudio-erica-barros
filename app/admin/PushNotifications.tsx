@@ -23,6 +23,32 @@ function urlBase64ToUint8Array(base64String: string) {
   return output;
 }
 
+function getErrorMessage(error: unknown) {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "object" && error !== null) {
+    const item = error as {
+      message?: string;
+      details?: string;
+      hint?: string;
+      code?: string;
+    };
+
+    return [
+      item.message,
+      item.details,
+      item.hint,
+      item.code ? `Código: ${item.code}` : "",
+    ]
+      .filter(Boolean)
+      .join(" | ");
+  }
+
+  return String(error);
+}
+
 export default function PushNotifications() {
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
@@ -32,20 +58,36 @@ export default function PushNotifications() {
     setMessage("");
 
     try {
-      if (!("serviceWorker" in navigator) || !("PushManager" in window)) {
-        throw new Error("Este navegador não oferece suporte a notificações.");
+      if (
+        !("serviceWorker" in navigator) ||
+        !("PushManager" in window)
+      ) {
+        throw new Error(
+          "Este navegador não oferece suporte a notificações."
+        );
+      }
+
+      if (!("Notification" in window)) {
+        throw new Error(
+          "As notificações não estão disponíveis neste aparelho."
+        );
       }
 
       const permission = await Notification.requestPermission();
 
       if (permission !== "granted") {
-        throw new Error("Permissão de notificações não concedida.");
+        throw new Error(
+          "Permissão não concedida. Verifique as notificações nas configurações do Android."
+        );
       }
 
-      const registration = await navigator.serviceWorker.register("/sw.js");
+      const registration =
+        await navigator.serviceWorker.register("/sw.js");
+
       await navigator.serviceWorker.ready;
 
-      let subscription = await registration.pushManager.getSubscription();
+      let subscription =
+        await registration.pushManager.getSubscription();
 
       if (!subscription) {
         subscription = await registration.pushManager.subscribe({
@@ -63,7 +105,9 @@ export default function PushNotifications() {
         !subscriptionData.keys?.p256dh ||
         !subscriptionData.keys?.auth
       ) {
-        throw new Error("Não foi possível obter os dados do aparelho.");
+        throw new Error(
+          "O aparelho não forneceu os dados necessários para o cadastro."
+        );
       }
 
       const { error: deleteError } = await supabase
@@ -71,7 +115,9 @@ export default function PushNotifications() {
         .delete()
         .eq("endpoint", subscriptionData.endpoint);
 
-      if (deleteError) throw deleteError;
+      if (deleteError) {
+        throw deleteError;
+      }
 
       const { error: insertError } = await supabase
         .from("push_subscriptions")
@@ -82,15 +128,18 @@ export default function PushNotifications() {
           auth: subscriptionData.keys.auth,
         });
 
-      if (insertError) throw insertError;
+      if (insertError) {
+        throw insertError;
+      }
 
-      setMessage("Notificações ativadas neste aparelho!");
-    } catch (error) {
-      console.error(error);
       setMessage(
-        error instanceof Error
-          ? error.message
-          : "Não foi possível ativar as notificações."
+        "Sucesso! Este celular foi cadastrado para receber notificações."
+      );
+    } catch (error) {
+      console.error("Erro ao ativar notificações:", error);
+
+      setMessage(
+        "Falha no cadastro: " + getErrorMessage(error)
       );
     } finally {
       setLoading(false);
@@ -112,7 +161,8 @@ export default function PushNotifications() {
       </h2>
 
       <p style={{ color: "#526157" }}>
-        Ative para preparar este aparelho para receber avisos de novos agendamentos.
+        Ative para receber avisos de novos agendamentos,
+        mesmo quando o aplicativo estiver fechado.
       </p>
 
       <button
@@ -133,7 +183,13 @@ export default function PushNotifications() {
       </button>
 
       {message && (
-        <p style={{ color: "#244C3B", marginBottom: 0 }}>
+        <p
+          style={{
+            color: "#244C3B",
+            marginBottom: 0,
+            overflowWrap: "anywhere",
+          }}
+        >
           {message}
         </p>
       )}
